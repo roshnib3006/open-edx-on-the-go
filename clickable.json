@@ -1,0 +1,28 @@
+{
+  "name": "org.openedx.mobile",
+  "version": "1.0.0",
+  "title": "Open edX on the Go",
+  "description": "A mobile Open edX client for Ubuntu Touch/Lomiri platforms",
+  "architecture": "armhf",
+  "framework": "ubuntu-sdk-20.04",
+  "hooks": {
+    "openedx": {
+      "apparmor": "apprun.json",
+      "desktop": "openedx.desktop",
+      "apparmor-extensions": ["networking"]
+    }
+  },
+  "apps": {
+    "openedx": {
+      "command": "qmlscene qml/Main.qml",
+      "desktop": "openedx.desktop"
+    }
+  },
+  "parts": {
+    "qml": {
+      "plugin": "qml",
+      "source": ".",
+      "source-subdir": "qml"
+    }
+  }
+}

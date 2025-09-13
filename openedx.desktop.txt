@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=Open edX on the Go
+Comment=Mobile Open edX client for Ubuntu Touch
+Exec=qmlscene qml/Main.qml
+Icon=icon
+Type=Application
+Categories=Education;
+X-Ubuntu-Touch=true
