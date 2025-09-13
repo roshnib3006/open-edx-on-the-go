@@ -1,0 +1,925 @@
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 1.15
+import Qt.labs.platform 1.1
+import QtQuick.Window 2.15
+import org.kde.kirigami 2.20 as Kirigami
+
+Kirigami.ApplicationWindow {
+    id: window
+    width: 360
+    height: 640
+    visible: true
+    title: "Open edX on the Go"
+
+    // App state variables
+    property bool loggedIn: false
+    property string username: ""
+    property string authToken: ""
+    property var currentCourse: null
+    property var downloadedCourses: []
+    
+    // Sample course data (would come from API in real app)
+    property var courseList: [
+        {
+            "id": 1,
+            "name": "Introduction to Python",
+            "org": "edX",
+            "description": "Learn the fundamentals of Python programming",
+            "image": "https://placehold.co/400x200/4CAF50/FFFFFF?text=Python+Course",
+            "progress": 35,
+            "enrolled": true
+        },
+        {
+            "id": 2,
+            "name": "Data Science Essentials",
+            "org": "MIT",
+            "description": "Master data analysis and visualization techniques",
+            "image": "https://placehold.co/400x200/2196F3/FFFFFF?text=Data+Science",
+            "progress": 0,
+            "enrolled": false
+        },
+        {
+            "id": 3,
+            "name": "Machine Learning Fundamentals",
+            "org": "Stanford",
+            "description": "Explore the basics of machine learning algorithms",
+            "image": "https://placehold.co/400x200/9C27B0/FFFFFF?text=Machine+Learning",
+            "progress": 0,
+            "enrolled": false
+        }
+    ]
+
+    // Configuration for Clickable packaging (Ubuntu Touch)
+    property string clickableConfig: `
+{
+  "name": "org.openedx.mobile",
+  "version": "1.0.0",
+  "title": "Open edX on the Go",
+  "description": "A mobile Open edX client for Ubuntu Touch/Lomiri",
+  "architecture": "armhf",
+  "framework": "ubuntu-sdk-20.04",
+  "hooks": {
+    "openedx": {
+      "apparmor": "apprun.json",
+      "desktop": "openedx.desktop",
+      "apparmor-extensions": ["networking"]
+    }
+  },
+  "apps": {
+    "openedx": {
+      "command": "qmlscene qml/Main.qml",
+      "desktop": "openedx.desktop"
+    }
+  },
+  "parts": {
+    "qml": {
+      "plugin": "qml",
+      "source": ".",
+      "source-subdir": "qml"
+    }
+  }
+}
+`
+
+    // Desktop file configuration
+    property string desktopFile: `
+[Desktop Entry]
+Name=Open edX on the Go
+Comment=Mobile Open edX client for Ubuntu Touch
+Exec=qmlscene qml/Main.qml
+Icon=icon
+Type=Application
+Categories=Education;
+X-Ubuntu-Touch=true
+`
+
+    // AppArmor configuration
+    property string apparmorConfig: `
+{
+  "policy_groups": ["networking"]
+}
+`
+
+    // Navigation pages
+    globalDrawer: Kirigami.GlobalDrawer {
+        title: "Open edX"
+        
+        Kirigami.NavigationTabButton {
+            text: "Courses"
+            icon.name: "folder"
+            checked: true
+            onClicked: pageStack.layers.push(coursesPage)
+        }
+        
+        Kirigami.NavigationTabButton {
+            text: "Downloads"
+            icon.name: "download"
+            onClicked: pageStack.layers.push(downloadsPage)
+        }
+        
+        Kirigami.NavigationTabButton {
+            text: "Profile"
+            icon.name: "user"
+            onClicked: pageStack.layers.push(profilePage)
+        }
+        
+        Kirigami.NavigationTabButton {
+            text: "Settings"
+            icon.name: "settings"
+            onClicked: pageStack.layers.push(settingsPage)
+        }
+        
+        Kirigami.NavigationTabButton {
+            text: "Setup"
+            icon.name: "wrench"
+            onClicked: pageStack.layers.push(setupPage)
+        }
+        
+        actions: [
+            Kirigami.Action {
+                text: "About"
+                icon.name: "help"
+                onTriggered: aboutDialog.open()
+            },
+            Kirigami.Action {
+                text: loggedIn ? "Logout" : "Login"
+                icon.name: loggedIn ? "logout" : "login"
+                onTriggered: loggedIn ? logout() : pageStack.layers.push(loginPage)
+            }
+        ]
+    }
+
+    // Login page component
+    Component {
+        id: loginPage
+        
+        Kirigami.Page {
+            title: "Login to Open edX"
+            
+            ColumnLayout {
+                anchors.centerIn: parent
+                width: parent.width * 0.8
+                spacing: Kirigami.Units.largeSpacing
+                
+                Kirigami.Heading {
+                    text: "Welcome Back"
+                    level: 2
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                
+                TextField {
+                    id: usernameField
+                    placeholderText: "Username or Email"
+                    Layout.fillWidth: true
+                }
+                
+                TextField {
+                    id: passwordField
+                    placeholderText: "Password"
+                    echoMode: TextInput.Password
+                    Layout.fillWidth: true
+                }
+                
+                Button {
+                    text: "Login"
+                    highlighted: true
+                    Layout.fillWidth: true
+                    onClicked: attemptLogin(usernameField.text, passwordField.text)
+                }
+                
+                Label {
+                    text: "Don't have an account? Sign up on the Open edX website"
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                }
+            }
+        }
+    }
+
+    // Courses page component
+    Component {
+        id: coursesPage
+        
+        Kirigami.Page {
+            title: "Courses"
+            
+            ListView {
+                id: courseListView
+                anchors.fill: parent
+                model: courseList
+                spacing: Kirigami.Units.smallSpacing
+                
+                delegate: Kirigami.SwipeListItem {
+                    id: listItem
+                    width: parent.width
+                    
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.largeSpacing
+                        
+                        Rectangle {
+                            Layout.preferredWidth: 80
+                            Layout.preferredHeight: 60
+                            color: "lightgray"
+                            radius: 4
+                            
+                            Image {
+                                anchors.fill: parent
+                                source: modelData.image
+                                fillMode: Image.PreserveAspectCrop
+                                sourceSize: Qt.size(80, 60)
+                            }
+                        }
+                        
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            
+                            Label {
+                                text: modelData.name
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            
+                            Label {
+                                text: modelData.org
+                                color: Kirigami.Theme.disabledTextColor
+                                font.pointSize: 10
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            
+                            ProgressBar {
+                                value: modelData.progress / 100
+                                visible: modelData.enrolled
+                                Layout.fillWidth: true
+                            }
+                            
+                            Label {
+                                text: modelData.enrolled ? (modelData.progress + "% Complete") : "Not Enrolled"
+                                color: Kirigami.Theme.disabledTextColor
+                                font.pointSize: 10
+                                visible: modelData.enrolled
+                            }
+                        }
+                        
+                        Button {
+                            text: modelData.enrolled ? "Continue" : "Enroll"
+                            Layout.alignment: Qt.AlignRight
+                            onClicked: {
+                                currentCourse = modelData;
+                                pageStack.layers.push(courseDetailPage);
+                            }
+                        }
+                    }
+                    
+                    actions: [
+                        Kirigami.Action {
+                            icon.name: "download"
+                            text: "Download for offline"
+                            visible: modelData.enrolled
+                            onTriggered: downloadCourse(modelData)
+                        }
+                    ]
+                }
+                
+                Kirigami.PlaceholderMessage {
+                    visible: courseListView.count === 0
+                    text: "No courses available"
+                    helpfulAction: Kirigami.Action {
+                        text: "Reload courses"
+                        onTriggered: loadCourses()
+                    }
+                }
+            }
+            
+            Button {
+                anchors {
+                    bottom: parent.bottom
+                    right: parent.right
+                    margins: Kirigami.Units.largeSpacing
+                }
+                icon.name: "refresh"
+                text: "Refresh Courses"
+                onClicked: loadCourses()
+            }
+        }
+    }
+
+    // Course detail page component
+    Component {
+        id: courseDetailPage
+        
+        Kirigami.Page {
+            title: currentCourse ? currentCourse.name : "Course Details"
+            
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: 0
+                
+                Rectangle {
+                    Layout.preferredHeight: 200
+                    Layout.fillWidth: true
+                    color: "lightgray"
+                    
+                    Image {
+                        anchors.fill: parent
+                        source: currentCourse ? currentCourse.image : ""
+                        fillMode: Image.PreserveAspectCrop
+                    }
+                }
+                
+                ColumnLayout {
+                    Layout.margins: Kirigami.Units.largeSpacing
+                    Layout.fillWidth: true
+                    spacing: Kirigami.Units.largeSpacing
+                    
+                    Label {
+                        text: currentCourse ? currentCourse.name : ""
+                        font.bold: true
+                        font.pointSize: 18
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+                    
+                    Label {
+                        text: currentCourse ? currentCourse.org : ""
+                        color: Kirigami.Theme.disabledTextColor
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+                    
+                    Label {
+                        text: currentCourse ? currentCourse.description : ""
+                        wrapMode: Text.Wrap
+                        Layout.fillWidth: true
+                    }
+                    
+                    ProgressBar {
+                        value: currentCourse ? currentCourse.progress / 100 : 0
+                        Layout.fillWidth: true
+                    }
+                    
+                    Label {
+                        text: currentCourse ? (currentCourse.progress + "% Complete") : ""
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                    
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: Kirigami.Units.smallSpacing
+                        
+                        Button {
+                            text: "Resume"
+                            highlighted: true
+                            Layout.fillWidth: true
+                            onClicked: pageStack.layers.push(courseContentPage)
+                        }
+                        
+                        Button {
+                            text: "Download"
+                            Layout.fillWidth: true
+                            onClicked: downloadCourse(currentCourse)
+                        }
+                    }
+                }
+                
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+                
+                Label {
+                    text: "Course Content"
+                    font.bold: true
+                    Layout.margins: Kirigami.Units.largeSpacing
+                }
+                
+                ListView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    model: 5
+                    delegate: Kirigami.BasicListItem {
+                        label: "Unit " + (index + 1) + ": Introduction to key concepts"
+                        icon: "video"
+                        onClicked: pageStack.layers.push(courseContentPage)
+                    }
+                }
+            }
+        }
+    }
+
+    // Course content page component
+    Component {
+        id: courseContentPage
+        
+        Kirigami.Page {
+            title: "Course Content"
+            
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Kirigami.Units.largeSpacing
+                
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 200
+                    color: "lightgray"
+                    radius: 4
+                    
+                    Label {
+                        anchors.centerIn: parent
+                        text: "Video Player Placeholder"
+                    }
+                    
+                    Button {
+                        anchors.centerIn: parent
+                        icon.name: "play"
+                        text: "Play Video"
+                        onClicked: console.log("Video playback started")
+                    }
+                }
+                
+                Label {
+                    text: "Introduction to Python Programming"
+                    font.bold: true
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                }
+                
+                Label {
+                    text: "In this module, you'll learn the basics of Python syntax, data types, and control structures."
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                    Layout.rightMargin: Kirigami.Units.largeSpacing
+                }
+                
+                Button {
+                    text: "Mark as Complete"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: markAsComplete()
+                }
+                
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+                
+                Label {
+                    text: "Next: Data Structures in Python"
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                }
+                
+                Button {
+                    text: "Continue to Next Unit"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: console.log("Navigate to next unit")
+                }
+            }
+        }
+    }
+
+    // Downloads page component
+    Component {
+        id: downloadsPage
+        
+        Kirigami.Page {
+            title: "Downloaded Courses"
+            
+            ListView {
+                id: downloadedListView
+                anchors.fill: parent
+                model: downloadedCourses
+                
+                delegate: Kirigami.SwipeListItem {
+                    width: parent.width
+                    
+                    contentItem: RowLayout {
+                        spacing: Kirigami.Units.largeSpacing
+                        
+                        Rectangle {
+                            Layout.preferredWidth: 80
+                            Layout.preferredHeight: 60
+                            color: "lightgray"
+                            radius: 4
+                            
+                            Image {
+                                anchors.fill: parent
+                                source: modelData.image
+                                fillMode: Image.PreserveAspectCrop
+                                sourceSize: Qt.size(80, 60)
+                            }
+                        }
+                        
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: Kirigami.Units.smallSpacing
+                            
+                            Label {
+                                text: modelData.name
+                                font.bold: true
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            
+                            Label {
+                                text: modelData.org
+                                color: Kirigami.Theme.disabledTextColor
+                                font.pointSize: 10
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                            
+                            Label {
+                                text: "Downloaded: 250MB of 350MB"
+                                color: Kirigami.Theme.disabledTextColor
+                                font.pointSize: 10
+                            }
+                        }
+                        
+                        Button {
+                            text: "Open"
+                            Layout.alignment: Qt.AlignRight
+                            onClicked: {
+                                currentCourse = modelData;
+                                pageStack.layers.push(courseDetailPage);
+                            }
+                        }
+                    }
+                    
+                    actions: [
+                        Kirigami.Action {
+                            icon.name: "delete"
+                            text: "Remove download"
+                            onTriggered: removeDownload(modelData.id)
+                        }
+                    ]
+                }
+                
+                Kirigami.PlaceholderMessage {
+                    visible: downloadedListView.count === 0
+                    text: "No downloaded courses"
+                }
+            }
+        }
+    }
+
+    // Profile page component
+    Component {
+        id: profilePage
+        
+        Kirigami.Page {
+            title: "Profile"
+            
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Kirigami.Units.largeSpacing
+                
+                Rectangle {
+                    width: 120
+                    height: 120
+                    radius: 60
+                    color: "lightblue"
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.topMargin: Kirigami.Units.largeSpacing
+                    
+                    Label {
+                        anchors.centerIn: parent
+                        text: "👤"
+                        font.pointSize: 40
+                    }
+                }
+                
+                Label {
+                    text: username
+                    font.bold: true
+                    font.pointSize: 18
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                
+                Label {
+                    text: "Enrolled in " + getEnrolledCount() + " courses"
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+                
+                GridLayout {
+                    columns: 2
+                    rowSpaging: Kirigami.Units.smallSpacing
+                    columnSpacing: Kirigami.Units.largeSpacing
+                    Layout.fillWidth: true
+                    Layout.margins: Kirigami.Units.largeSpacing
+                    
+                    Label { text: "Account created:"; color: Kirigami.Theme.disabledTextColor }
+                    Label { text: "January 15, 2023" }
+                    
+                    Label { text: "Last login:"; color: Kirigami.Theme.disabledTextColor }
+                    Label { text: "Today, 14:30" }
+                    
+                    Label { text: "Completed courses:"; color: Kirigami.Theme.disabledTextColor }
+                    Label { text: "3" }
+                    
+                    Label { text: "Certificates earned:"; color: Kirigami.Theme.disabledTextColor }
+                    Label { text: "2" }
+                }
+                
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+                
+                Button {
+                    text: "View Certificates"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: console.log("Show certificates")
+                }
+                
+                Button {
+                    text: "Edit Profile"
+                    Layout.alignment: Qt.AlignHCenter
+                    onClicked: console.log("Edit profile")
+                }
+            }
+        }
+    }
+
+    // Settings page component
+    Component {
+        id: settingsPage
+        
+        Kirigami.Page {
+            title: "Settings"
+            
+            ListView {
+                anchors.fill: parent
+                model: [
+                    { title: "Wi-Fi Only Downloads", icon: "wifi", hasSwitch: true, switchValue: true },
+                    { title: "Auto-Play Videos", icon: "video", hasSwitch: true, switchValue: false },
+                    { title: "Notifications", icon: "notifications", hasSwitch: true, switchValue: true },
+                    { title: "Dark Mode", icon: "darkmode", hasSwitch: true, switchValue: false },
+                    { title: "Clear Cache", icon: "trash", action: clearCache },
+                    { title: "Storage", icon: "storage", value: "1.2 GB used", action: showStorageDetails },
+                    { title: "Help & Support", icon: "help", action: showHelp },
+                    { title: "About Open edX Mobile", icon: "info", action: aboutDialog.open }
+                ]
+                
+                delegate: Kirigami.BasicListItem {
+                    text: modelData.title
+                    icon: modelData.icon
+                    onClicked: {
+                        if (modelData.action) modelData.action()
+                    }
+                    
+                    trailing: RowLayout {
+                        Switch {
+                            checked: modelData.switchValue || false
+                            visible: modelData.hasSwitch
+                        }
+                        
+                        Label {
+                            text: modelData.value || ""
+                            color: Kirigami.Theme.disabledTextColor
+                            visible: !!modelData.value
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Setup page component
+    Component {
+        id: setupPage
+        
+        Kirigami.Page {
+            title: "Setup & Configuration"
+            
+            ColumnLayout {
+                anchors.fill: parent
+                spacing: Kirigami.Units.largeSpacing
+                
+                Kirigami.Heading {
+                    text: "Project Setup"
+                    level: 2
+                    Layout.alignment: Qt.AlignHCenter
+                }
+                
+                Label {
+                    text: "This app is designed for Ubuntu Touch/Lomiri. Use the following steps to set up your development environment:"
+                    wrapMode: Text.Wrap
+                    Layout.fillWidth: true
+                }
+                
+                Button {
+                    text: "Install Clickable"
+                    Layout.fillWidth: true
+                    onClicked: {
+                        console.log("Install Clickable:\nsudo add-apt-repository ppa:clickable/ppa\nsudo apt update\nsudo apt install clickable")
+                    }
+                }
+                
+                Button {
+                    text: "Copy Configuration Files"
+                    Layout.fillWidth: true
+                    onClicked: generateConfigFiles()
+                }
+                
+                Kirigami.Separator {
+                    Layout.fillWidth: true
+                }
+                
+                Label {
+                    text: "Build Commands:"
+                    font.bold: true
+                    Layout.fillWidth: true
+                }
+                
+                Label {
+                    text: "clickable build\nclickable install\nclickable run"
+                    font.family: "Monospace"
+                    color: Kirigami.Theme.highlightColor
+                    Layout.fillWidth: true
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: aboutDialog
+        title: "About Open edX on the Go"
+        standardButtons: Dialog.Close
+        
+        ColumnLayout {
+            spacing: Kirigami.Units.largeSpacing
+            
+            Label {
+                text: "Open edX on the Go"
+                font.bold: true
+                font.pointSize: 16
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Label {
+                text: "Version 1.0.0"
+                Layout.alignment: Qt.AlignHCenter
+            }
+            
+            Label {
+                text: "A mobile client for Open edX learning platform designed for Ubuntu Touch and Lomiri"
+                wrapMode: Text.Wrap
+                Layout.preferredWidth: 300
+            }
+            
+            Label {
+                text: "© 2023 Open edX Mobile Contributors"
+                color: Kirigami.Theme.disabledTextColor
+                Layout.alignment: Qt.AlignHCenter
+            }
+        }
+    }
+
+    // App initialization
+    Component.onCompleted: {
+        // Check if user was previously logged in
+        const savedToken = "mock_saved_token";
+        if (savedToken) {
+            authToken = savedToken;
+            username = "demo_user";
+            loggedIn = true;
+            loadCourses();
+        }
+        
+        // Start with login page if not authenticated
+        if (!loggedIn) {
+            pageStack.layers.push(loginPage);
+        } else {
+            pageStack.layers.push(coursesPage);
+        }
+    }
+
+    // API functions (mock implementations)
+    function attemptLogin(user, pass) {
+        // In a real app, this would call the Open edX API
+        console.log("Attempting login for:", user);
+        
+        // Mock successful login
+        setTimeout(function() {
+            authToken = "mock_token_" + Math.random();
+            username = user;
+            loggedIn = true;
+            pageStack.layers.pop();
+            loadCourses();
+        }, 1000);
+    }
+    
+    function logout() {
+        authToken = "";
+        username = "";
+        loggedIn = false;
+        courseList.forEach(function(course) {
+            course.enrolled = false;
+            course.progress = 0;
+        });
+        pageStack.layers.push(loginPage);
+    }
+    
+    function loadCourses() {
+        // In a real app, this would fetch from Open edX API
+        console.log("Loading courses with token:", authToken);
+        
+        // Simulate API delay
+        loadingIndicator.visible = true;
+        setTimeout(function() {
+            loadingIndicator.visible = false;
+            // For demo, we'll just use the static data
+        }, 1500);
+    }
+    
+    function downloadCourse(course) {
+        console.log("Downloading course:", course.name);
+        // Add to downloaded courses if not already there
+        if (!downloadedCourses.some(c => c.id === course.id)) {
+            downloadedCourses.push(course);
+            downloadedCoursesChanged();
+        }
+        
+        // Show download progress (mock)
+        var progress = 0;
+        var interval = setInterval(function() {
+            progress += 5;
+            console.log("Download progress:", progress + "%");
+            if (progress >= 100) {
+                clearInterval(interval);
+                console.log("Download completed:", course.name);
+            }
+        }, 200);
+    }
+    
+    function removeDownload(courseId) {
+        downloadedCourses = downloadedCourses.filter(c => c.id !== courseId);
+        console.log("Removed download for course ID:", courseId);
+    }
+    
+    function markAsComplete() {
+        if (currentCourse) {
+            currentCourse.progress = Math.min(currentCourse.progress + 25, 100);
+            console.log("Marked unit as complete. Progress:", currentCourse.progress + "%");
+        }
+    }
+    
+    function getEnrolledCount() {
+        return courseList.filter(c => c.enrolled).length;
+    }
+    
+    function clearCache() {
+        console.log("Clearing cached data");
+        // Implementation would clear local storage, cached files, etc.
+    }
+    
+    function showStorageDetails() {
+        console.log("Showing storage details");
+        // Implementation would show storage usage breakdown
+    }
+    
+    function showHelp() {
+        console.log("Showing help and support");
+        // Implementation would navigate to help section
+    }
+    
+    function generateConfigFiles() {
+        console.log("Generated configuration files for Clickable packaging");
+        console.log("Created: clickable.json, openedx.desktop, apprun.json");
+    }
+
+    // Loading indicator
+    Rectangle {
+        id: loadingIndicator
+        anchors.centerIn: parent
+        width: 100
+        height: 100
+        color: Kirigami.Theme.backgroundColor
+        radius: 10
+        visible: false
+        z: 1000
+        
+        Column {
+            anchors.centerIn: parent
+            spacing: Kirigami.Units.smallSpacing
+            
+            BusyIndicator {
+                anchors.horizontalCenter: parent.horizontalCenter
+                running: loadingIndicator.visible
+            }
+            
+            Label {
+                text: "Loading..."
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+        }
+    }
+}
